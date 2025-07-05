@@ -1,0 +1,12 @@
+name: Deploy HTML App
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    uses: VikalpHarbola/devops-pipelines/.github/workflows/deploy-gh-pages.yml@main
+    with:
+      publish_dir: './'
