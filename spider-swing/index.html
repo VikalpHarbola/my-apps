@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no" />
+  <title>SpiderSwing — 2D Web Swinging Sidescroller</title>
+  <style>
+    html,body{height:100%;margin:0;background:#0b1220;font-family:Inter,system-ui,Arial;color:#ddd;touch-action:none;overflow:hidden}
+    #game{display:block;width:100%;height:100vh;background:linear-gradient(#0b1624,#07121a)}
+    .ui{position:fixed;left:12px;top:12px;background:rgba(255,255,255,0.08);padding:8px 12px;border-radius:10px;font-size:13px;max-width:80%;line-height:1.4;z-index:10}
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div class="ui">
+    <strong>Controls:</strong><br>
+    <em>Desktop:</em> Click to shoot web, Space to release, A/D to pump swing, W/Up to jump.<br>
+    <em>Mobile:</em> Tap anywhere to shoot web, two-finger tap to release, swipe left/right while swinging to gain momentum, swipe up to jump.
+  </div>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+let cw, ch;
+function resize(){cw=canvas.width=window.innerWidth;ch=canvas.height=window.innerHeight;}
+window.addEventListener('resize',resize);resize();
+
+let buildings = [];
+for(let i=0;i<50;i++){
+  buildings.push({x:i*200, y:ch - (100+Math.random()*200), w:150, h:ch});
+}
+
+let player = {x:150, y:ch-200, vx:0, vy:0, onGround:false, web:null};
+let gravity = 0.5;
+let keys = {};
+
+window.addEventListener('keydown',e=>{
+  keys[e.code]=true;
+  if(e.code==='Space') releaseWeb();
+  if((e.code==='KeyW' || e.code==='ArrowUp') && player.onGround) player.vy=-10;
+});
+window.addEventListener('keyup',e=>keys[e.code]=false);
+canvas.addEventListener('mousedown',shootWeb);
+
+// Mobile controls
+touchStartPos = null; touchCount = 0;
+canvas.addEventListener('touchstart', e => {
+  touchCount = e.touches.length;
+  if(touchCount===1) {shootWeb(); touchStartPos = {x:e.touches[0].clientX, y:e.touches[0].clientY};}
+  if(touchCount===2) releaseWeb();
+});
+canvas.addEventListener('touchend', e => { touchCount = e.touches.length; });
+canvas.addEventListener('touchmove', e => {
+  if(!touchStartPos) return;
+  let dx = e.touches[0].clientX - touchStartPos.x;
+  let dy = e.touches[0].clientY - touchStartPos.y;
+  if(Math.abs(dx) > 50 && player.web){
+    player.vx += dx>0 ? 0.5 : -0.5;
+    touchStartPos = {x:e.touches[0].clientX, y:e.touches[0].clientY};
+  }
+  if(dy < -50 && player.onGround){
+    player.vy = -10;
+    touchStartPos = null;
+  }
+});
+
+function shootWeb(){
+  let closest = null, dist = Infinity;
+  for(let b of buildings){
+    let roofX = b.x + b.w/2;
+    let roofY = b.y;
+    let dx = roofX - player.x;
+    let dy = roofY - player.y;
+    let d = Math.sqrt(dx*dx + dy*dy);
+    if(d < dist && d < 400){ dist = d; closest = {x:roofX, y:roofY}; }
+  }
+  if(closest) player.web = {x:closest.x, y:closest.y, length:dist};
+}
+
+function releaseWeb(){
+  player.web = null;
+}
+
+function update(){
+  if(player.web){
+    let dx = player.x - player.web.x;
+    let dy = player.y - player.web.y;
+    let dist = Math.sqrt(dx*dx + dy*dy);
+    if(dist > player.web.length){
+      let pull = (dist - player.web.length) * 0.1;
+      let nx = dx/dist, ny = dy/dist;
+      player.vx -= nx * pull;
+      player.vy -= ny * pull;
+    }
+    if(keys['KeyA']) player.vx -= 0.2;
+    if(keys['KeyD']) player.vx += 0.2;
+  } else {
+    if(keys['KeyA']) player.vx -= 0.2;
+    if(keys['KeyD']) player.vx += 0.2;
+  }
+
+  player.vy += gravity;
+  player.x += player.vx;
+  player.y += player.vy;
+  player.vx *= 0.99;
+
+  player.onGround = false;
+  for(let b of buildings){
+    if(player.x > b.x && player.x < b.x+b.w && player.y > b.y-20 && player.vy>=0){
+      player.y = b.y-20;
+      player.vy = 0;
+      player.onGround = true;
+    }
+  }
+
+  if(player.y > ch-20){player.y = ch-20; player.vy=0; player.onGround=true;}
+}
+
+function draw(){
+  ctx.clearRect(0,0,cw,ch);
+  ctx.fillStyle='#222';
+  for(let b of buildings){
+    ctx.fillRect(b.x, b.y, b.w, b.h);
+  }
+  if(player.web){
+    ctx.strokeStyle='white';
+    ctx.beginPath();
+    ctx.moveTo(player.x, player.y);
+    ctx.lineTo(player.web.x, player.web.y);
+    ctx.stroke();
+  }
+  ctx.fillStyle='red';
+  ctx.beginPath();
+  ctx.arc(player.x, player.y, 10, 0, Math.PI*2);
+  ctx.fill();
+}
+
+function loop(){
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+loop();
+</script>
+</body>
+</html>
