@@ -2,296 +2,145 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no" />
   <title>SpiderSwing — 2D Web Swinging Sidescroller</title>
   <style>
-    :root{--bg:#0b1220;--sky:#0e1a2b;--accent:#ff3b3b}
-    html,body{height:100%;margin:0;background:var(--bg);font-family:Inter,system-ui,Arial;color:#ddd}
+    html,body{height:100%;margin:0;background:#0b1220;font-family:Inter,system-ui,Arial;color:#ddd;touch-action:none;overflow:hidden}
     #game{display:block;width:100%;height:100vh;background:linear-gradient(#0b1624,#07121a)}
-    .ui{position:fixed;left:12px;top:12px;background:rgba(255,255,255,0.03);padding:8px 12px;border-radius:10px;font-size:13px}
-    .footer{position:fixed;right:12px;top:12px;background:rgba(255,255,255,0.03);padding:8px 12px;border-radius:10px;font-size:13px}
-    a{color:#8fd3ff}
-    button{background:#fff2;border-radius:6px;padding:6px 10px;border:1px solid rgba(255,255,255,0.06)}
+    .ui{position:fixed;left:12px;top:12px;background:rgba(255,255,255,0.08);padding:8px 12px;border-radius:10px;font-size:13px;max-width:80%;line-height:1.4;z-index:10}
   </style>
 </head>
 <body>
   <canvas id="game"></canvas>
-  <div class="ui">Click / Tap to shoot web. Space to release. A / D to pump swing. </div>
-  <div class="footer">Made for you — open in browser and play</div>
+  <div class="ui">
+    <strong>Controls:</strong><br>
+    <em>Desktop:</em> Click to shoot web, Space to release, A/D to pump swing, W/Up to jump.<br>
+    <em>Mobile:</em> Tap anywhere to shoot web, two-finger tap to release, swipe left/right while swinging to gain momentum, swipe up to jump.
+  </div>
 
 <script>
-(() => {
-  const canvas = document.getElementById('game');
-  const ctx = canvas.getContext('2d');
-  let W = canvas.width = innerWidth;
-  let H = canvas.height = innerHeight;
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+let cw, ch;
+function resize(){cw=canvas.width=window.innerWidth;ch=canvas.height=window.innerHeight;}
+window.addEventListener('resize',resize);resize();
 
-  // handle resize
-  addEventListener('resize', () => { W = canvas.width = innerWidth; H = canvas.height = innerHeight; });
+let buildings = [];
+for(let i=0;i<50;i++){
+  buildings.push({x:i*200, y:ch - (100+Math.random()*200), w:150, h:ch});
+}
 
-  // world parameters
-  const GRAV = 2000; // px/s^2
-  const TIME_STEP = 1/60;
+let player = {x:150, y:ch-200, vx:0, vy:0, onGround:false, web:null};
+let gravity = 0.5;
+let keys = {};
 
-  // Camera
-  let camX = 0;
+window.addEventListener('keydown',e=>{
+  keys[e.code]=true;
+  if(e.code==='Space') releaseWeb();
+  if((e.code==='KeyW' || e.code==='ArrowUp') && player.onGround) player.vy=-10;
+});
+window.addEventListener('keyup',e=>keys[e.code]=false);
+canvas.addEventListener('mousedown',shootWeb);
 
-  // Buildings generation
-  const SEGMENT_WIDTH = 200;
-  const BUILDING_GAP = 40;
-  const BUILDING_MIN = 120;
-  const BUILDING_MAX = H - 180;
-  const seed = (x) => { // simple pseudo-random
-    return Math.abs(Math.sin(x*123.4567))*10000 % 1;
+// Mobile controls
+touchStartPos = null; touchCount = 0;
+canvas.addEventListener('touchstart', e => {
+  touchCount = e.touches.length;
+  if(touchCount===1) {shootWeb(); touchStartPos = {x:e.touches[0].clientX, y:e.touches[0].clientY};}
+  if(touchCount===2) releaseWeb();
+});
+canvas.addEventListener('touchend', e => { touchCount = e.touches.length; });
+canvas.addEventListener('touchmove', e => {
+  if(!touchStartPos) return;
+  let dx = e.touches[0].clientX - touchStartPos.x;
+  let dy = e.touches[0].clientY - touchStartPos.y;
+  if(Math.abs(dx) > 50 && player.web){
+    player.vx += dx>0 ? 0.5 : -0.5;
+    touchStartPos = {x:e.touches[0].clientX, y:e.touches[0].clientY};
   }
-  function getBuildingAt(i){
-    // Procedural heights
-    const h = BUILDING_MIN + (seed(i*1.37)+0.2)* (BUILDING_MAX-BUILDING_MIN);
-    return {x: i*(SEGMENT_WIDTH+BUILDING_GAP), w: SEGMENT_WIDTH, h: Math.floor(h)};
+  if(dy < -50 && player.onGround){
+    player.vy = -10;
+    touchStartPos = null;
   }
+});
 
-  // player
-  const player = {
-    x: 100,
-    y: H/2 - 50,
-    vx: 0,
-    vy: 0,
-    r: 16,
-    onGround: false,
-  };
+function shootWeb(){
+  let closest = null, dist = Infinity;
+  for(let b of buildings){
+    let roofX = b.x + b.w/2;
+    let roofY = b.y;
+    let dx = roofX - player.x;
+    let dy = roofY - player.y;
+    let d = Math.sqrt(dx*dx + dy*dy);
+    if(d < dist && d < 400){ dist = d; closest = {x:roofX, y:roofY}; }
+  }
+  if(closest) player.web = {x:closest.x, y:closest.y, length:dist};
+}
 
-  // rope / web state
-  let rope = {
-    attached: false,
-    ax: 0, ay:0, // anchor
-    length: 0,
-  };
+function releaseWeb(){
+  player.web = null;
+}
 
-  // input
-  const keys = {};
-  addEventListener('keydown', e => { keys[e.key.toLowerCase()] = true; if(e.key === ' ') e.preventDefault(); });
-  addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
-
-  // mouse / touch to attach
-  let pointer = {x:0,y:0};
-  canvas.addEventListener('pointerdown', (ev)=>{
-    pointer.x = ev.clientX; pointer.y = ev.clientY;
-    shootWeb(pointer.x + camX, pointer.y);
-  });
-
-  function worldToScreen(x){ return x - camX; }
-
-  function shootWeb(wx, wy){
-    // find nearest building rooftop point within range
-    const maxRange = 900;
-    let best = null;
-    const leftIndex = Math.floor((wx - 200)/(SEGMENT_WIDTH+BUILDING_GAP)) - 2;
-    for(let i = leftIndex; i < leftIndex + 30; i++){
-      if(i<0) continue;
-      const b = getBuildingAt(i);
-      const bx = b.x + b.w/2;
-      const by = H - b.h;
-      const dx = bx - wx; const dy = by - wy;
-      const dist = Math.hypot(dx,dy);
-      if(dist <= maxRange){
-        if(!best || dist < best.dist) best = {i, bx, by, dist};
-      }
+function update(){
+  if(player.web){
+    let dx = player.x - player.web.x;
+    let dy = player.y - player.web.y;
+    let dist = Math.sqrt(dx*dx + dy*dy);
+    if(dist > player.web.length){
+      let pull = (dist - player.web.length) * 0.1;
+      let nx = dx/dist, ny = dy/dist;
+      player.vx -= nx * pull;
+      player.vy -= ny * pull;
     }
-    if(best){
-      rope.attached = true;
-      rope.ax = best.bx;
-      rope.ay = best.by;
-      rope.length = Math.hypot(player.x - rope.ax, player.y - rope.ay);
-      // small slack so it doesn't jitter into the anchor instantly
-    }
+    if(keys['KeyA']) player.vx -= 0.2;
+    if(keys['KeyD']) player.vx += 0.2;
+  } else {
+    if(keys['KeyA']) player.vx -= 0.2;
+    if(keys['KeyD']) player.vx += 0.2;
   }
 
-  function releaseWeb(){ rope.attached = false; }
+  player.vy += gravity;
+  player.x += player.vx;
+  player.y += player.vy;
+  player.vx *= 0.99;
 
-  // physics update
-  function step(dt){
-    // integrate gravity
-    player.vy += GRAV * dt;
-    // simple air drag
-    player.vx *= 0.999;
-    player.vy *= 0.999;
-
-    // tangential pumping when attached
-    if(rope.attached){
-      // compute vector from anchor to player
-      let dx = player.x - rope.ax;
-      let dy = player.y - rope.ay;
-      const dist = Math.hypot(dx,dy);
-      // enforce length constraint
-      const nrmx = dx/dist, nrmy = dy/dist;
-
-      // correct position to satisfy rope length (project to circle)
-      const desiredX = rope.ax + nrmx * rope.length;
-      const desiredY = rope.ay + nrmy * rope.length;
-      // apply velocity correction based on correction vector
-      player.x = desiredX;
-      player.y = desiredY;
-
-      // compute tangential direction (perpendicular)
-      const tangx = -nrmy, tangy = nrmx; // rotate by 90deg
-      // compute current tangential speed
-      const tangSpeed = player.vx * tangx + player.vy * tangy;
-
-      // pumping: A (left) negative, D (right) positive
-      let pump = 0;
-      if(keys['a']) pump = -1;
-      if(keys['d']) pump = 1;
-      // apply impulse in tangential direction to gain swing
-      const pumpForce = pump * 4000; // tune
-      player.vx += (tangx * pumpForce) * dt;
-      player.vy += (tangy * pumpForce) * dt;
-
-      // approximate centripetal correction: remove radial velocity
-      const radialVel = player.vx * nrmx + player.vy * nrmy;
-      player.vx -= radialVel * nrmx;
-      player.vy -= radialVel * nrmy;
-
-      // apply gravity along tangent by projecting gravity onto tangent
-      player.vx += tangx * (GRAV * dt * 0.0); // optional small effect
-    } else {
-      // normal freefall horizontal movement friction
-      player.x += player.vx * dt;
-      player.y += player.vy * dt;
-    }
-
-    // If attached, update position from velocity (tangential velocity preserved)
-    if(rope.attached){
-      player.x += player.vx * dt;
-      player.y += player.vy * dt;
-    }
-
-    // ground collision with buildings
-    // check which building below player
-    const idx = Math.floor(player.x / (SEGMENT_WIDTH+BUILDING_GAP));
-    const b = getBuildingAt(idx);
-    if(b){
-      const groundY = H - b.h;
-      // if player inside building horizontally? allow small overlap
-      const within = player.x > b.x - 2 && player.x < b.x + b.w + 2;
-      if(within && player.y + player.r > groundY){
-        player.y = groundY - player.r;
-        player.vy = 0;
-        player.onGround = true;
-      } else {
-        player.onGround = false;
-      }
-    }
-
-    // camera follows player smoothly
-    const targetCam = player.x - W*0.35;
-    camX += (targetCam - camX) * 0.12;
-
-    // keep player roughly within world bounds
-    if(player.y > H + 200) { // fell off
-      // respawn
-      player.x = Math.max(100, camX + 100);
-      player.y = H/2 - 50;
-      player.vx = 0; player.vy = 0;
-      releaseWeb();
+  player.onGround = false;
+  for(let b of buildings){
+    if(player.x > b.x && player.x < b.x+b.w && player.y > b.y-20 && player.vy>=0){
+      player.y = b.y-20;
+      player.vy = 0;
+      player.onGround = true;
     }
   }
 
-  // release on space
-  addEventListener('keydown', (e)=>{
-    if(e.code === 'Space'){
-      releaseWeb();
-    }
-  });
+  if(player.y > ch-20){player.y = ch-20; player.vy=0; player.onGround=true;}
+}
 
-  // simple collision for attaching to the side walls — allow hooking to building edges
-  // rendering
-  function draw(){
-    // clear
-    ctx.clearRect(0,0,W,H);
-
-    // sky gradient
-    const g = ctx.createLinearGradient(0,0,0,H);
-    g.addColorStop(0,'#091426'); g.addColorStop(1,'#04101a');
-    ctx.fillStyle = g; ctx.fillRect(0,0,W,H);
-
-    // draw buildings near camera
-    const firstIndex = Math.floor(camX / (SEGMENT_WIDTH+BUILDING_GAP)) - 3;
-    for(let i = firstIndex; i < firstIndex + 40; i++){
-      if(i<0) continue;
-      const b = getBuildingAt(i);
-      const sx = Math.floor(b.x - camX);
-      const sy = Math.floor(H - b.h);
-      // building body
-      ctx.fillStyle = '#223b4f';
-      ctx.fillRect(sx, sy, b.w, b.h);
-      // windows pattern
-      ctx.fillStyle = 'rgba(255,255,255,0.04)';
-      for(let y = sy+12; y < H-12; y+=26){
-        for(let x = sx+12; x < sx + b.w - 12; x+=28){
-          if(Math.random() < 0.5) ctx.fillRect(x, y, 14, 10);
-        }
-      }
-      // rooftop highlight
-      ctx.fillStyle = '#152936';
-      ctx.fillRect(sx, sy-6, b.w, 6);
-    }
-
-    // draw rope
-    if(rope.attached){
-      ctx.beginPath();
-      ctx.moveTo(worldToScreen(rope.ax), rope.ay);
-      ctx.lineTo(worldToScreen(player.x), player.y);
-      ctx.strokeStyle = '#bfe8ff';
-      ctx.lineWidth = 2;
-      ctx.stroke();
-      // anchor point
-      ctx.beginPath(); ctx.arc(worldToScreen(rope.ax), rope.ay, 6, 0, Math.PI*2);
-      ctx.fillStyle = '#88d0ff'; ctx.fill();
-    }
-
-    // draw player
-    ctx.save();
-    ctx.translate(worldToScreen(player.x), player.y);
-    // body shadow
-    ctx.beginPath(); ctx.arc(0,0,player.r+2,0,Math.PI*2); ctx.fillStyle='rgba(0,0,0,0.2)'; ctx.fill();
-    // hero
-    ctx.beginPath(); ctx.arc(0,0,player.r,0,Math.PI*2);
-    ctx.fillStyle = '#ff3b3b'; ctx.fill();
-    // eyes / mask lines
-    ctx.strokeStyle = 'white'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(-6,-4); ctx.lineTo(0,-2); ctx.lineTo(6,-4); ctx.stroke();
-    ctx.restore();
-
-    // HUD
-    ctx.fillStyle = 'rgba(255,255,255,0.9)'; ctx.font = '14px Arial';
-    ctx.fillText('Position: ' + Math.round(player.x) + ',' + Math.round(player.y), 14, H-48);
-    ctx.fillText('Speed: ' + Math.round(Math.hypot(player.vx, player.vy)), 14, H-28);
+function draw(){
+  ctx.clearRect(0,0,cw,ch);
+  ctx.fillStyle='#222';
+  for(let b of buildings){
+    ctx.fillRect(b.x, b.y, b.w, b.h);
   }
-
-  // main loop with fixed timestep integration
-  let acc = 0; let last = performance.now()/1000;
-  function frame(now){
-    now = now/1000;
-    let dt = now - last; if(dt > 0.1) dt = 0.1;
-    last = now;
-    acc += dt;
-    while(acc >= TIME_STEP){ step(TIME_STEP); acc -= TIME_STEP; }
-    draw();
-    requestAnimationFrame(frame);
+  if(player.web){
+    ctx.strokeStyle='white';
+    ctx.beginPath();
+    ctx.moveTo(player.x, player.y);
+    ctx.lineTo(player.web.x, player.web.y);
+    ctx.stroke();
   }
-  requestAnimationFrame(frame);
+  ctx.fillStyle='red';
+  ctx.beginPath();
+  ctx.arc(player.x, player.y, 10, 0, Math.PI*2);
+  ctx.fill();
+}
 
-  // touch/keyboard hints: allow mouse to drag anchor while attached
-  let dragging = false;
-  canvas.addEventListener('pointermove', (e)=>{ pointer.x = e.clientX; pointer.y = e.clientY; if(dragging && rope.attached){ rope.ax = pointer.x + camX; rope.ay = pointer.y; rope.length = Math.hypot(player.x - rope.ax, player.y - rope.ay); } });
-  canvas.addEventListener('pointerdown', ()=>{ if(rope.attached) dragging = true; });
-  canvas.addEventListener('pointerup', ()=>{ dragging = false; });
-
-  // allow jump from ground
-  addEventListener('keydown', (e)=>{ if(e.key === 'w' || e.key === 'ArrowUp'){ if(player.onGround){ player.vy = -900; player.onGround = false; } }});
-
-  // small helpful instructions in console
-  console.log('SpiderSwing loaded. Controls:\n- Click/Tap to shoot a web to nearest building rooftop in range\n- Space to release web\n- A/D to pump swing and gain momentum\n- W / Up arrow to jump when on ground');
-})();
+function loop(){
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+loop();
 </script>
 </body>
 </html>
